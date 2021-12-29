@@ -9,6 +9,8 @@
 
 ## Introduction
 
+MobileNetV2
+
 English | [简体中文](/README_zh-CN.md)
 
 MMClassification is an open source image classification toolbox based on PyTorch. It is
