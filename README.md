@@ -9,8 +9,6 @@
 
 ## Introduction
 
-MobileNetV2
-
 English | [简体中文](/README_zh-CN.md)
 
 MMClassification is an open source image classification toolbox based on PyTorch. It is
@@ -132,3 +130,183 @@ We wish that the toolbox and benchmark could serve the growing research communit
 - [MMFlow](https://github.com/open-mmlab/mmflow) OpenMMLab optical flow toolbox and benchmark.
 - [MMFewShot](https://github.com/open-mmlab/mmfewshot): OpenMMLab FewShot Learning Toolbox and Benchmark.
 - [MMHuman3D](https://github.com/open-mmlab/mmhuman3d): OpenMMLab 3D Human Parametric Model Toolbox and Benchmark.
+
+## 集成自己的数据集
+
+#### 1. 准备数据集
+
+首先准备好数据集，并搞成如下的文件结构：
+
+```
+imagenet
+├── meta
+|	├── train.txt
+|	├── val.txt
+├── train
+│   ├──	bingpian
+│   │   ├── 026.JPEG
+│   │   ├── ...
+│   ├── bubingpian
+│   │   ├── 999.JPEG
+│   │   ├── ...
+│   ├── ...
+├── val
+│   ├── bingpian
+│   │   ├── 0027.JPEG
+│   │   ├── ...
+│   ├── bubingpian
+│   │   ├── 993.JPEG
+│   │   ├── ...
+│   ├── ...
+```
+
+其中bingpian和bupingpian为类别
+
+train.txt和val.txt的格式如下(以train为例，val也是一样的)，用于导入到mmclassification中
+
+```
+bingpian/026.JPEG 0
+bubingpian/999.JPEG 1
+```
+
+生成train.txt代码（val也一样）
+
+```
+import os
+
+path1 = 'train/bingpian'
+path2 = 'train/bubingpian'
+f = open('train.txt', 'w')
+for file in os.listdir(path1):
+    f.write('bingpian/' + file + " " + '0' + '\n')
+for file in os.listdir(path2):
+    f.write('bubingpian/' + file + " " + '1' + '\n')
+```
+
+#### 2. 修改MMClassification代码
+
+```
+'mmcls/datasets'目录下新建py文件（名字自取，以'mydataset.py'为例），写入内容如下：(#对应自己的类别)
+```
+
+```
+import mmcv
+import numpy as np
+
+from .builder import DATASETS
+from .base_dataset import BaseDataset
+
+@DATASETS.register_module()     # 一定要加，用于注册
+class MyDataset(BaseDataset):   # MyDataset注意大小写，之后调用的时候一定要一模一样
+    CLASSES = ["bingpian","bubingpian"]   #对应自己的类别
+    def load_annotations(self):
+        assert isinstance(self.ann_file, str)
+        data_infos = []
+        with open(self.ann_file) as f:
+            samples = [x.strip().split(' ') for x in f.readlines()]
+            for filename, gt_label in samples:
+                info = {'img_prefix': self.data_prefix}
+                info['img_info'] = {'filename': filename}
+                info['gt_label'] = np.array(gt_label, dtype=np.int64)
+                data_infos.append(info)
+            return data_infos
+```
+
+```
+'mmcls/datasets'目录下修改'__init__.py'文件,添加内容如下：
+```
+
+注意：**'MyDataset'**与上面代码块中class **MyDataset**(BaseDataset)一致
+
+```
+from .base_dataset import BaseDataset
+from .builder import (DATASETS, PIPELINES, SAMPLERS, build_dataloader,
+                      build_dataset, build_sampler)
+from .cifar import CIFAR10, CIFAR100
+from .dataset_wrappers import (ClassBalancedDataset, ConcatDataset,
+                               RepeatDataset)
+from .imagenet import ImageNet
+from .imagenet21k import ImageNet21k
+from .mnist import MNIST, FashionMNIST
+from .multi_label import MultiLabelDataset
+from .samplers import DistributedSampler, RepeatAugSampler
+from .voc import VOC
+from .mydataset import MyDataset
+
+__all__ = [
+    'BaseDataset', 'ImageNet', 'CIFAR10', 'CIFAR100', 'MNIST', 'FashionMNIST',
+    'VOC', 'MultiLabelDataset', 'build_dataloader', 'build_dataset',
+    'DistributedSampler', 'ConcatDataset', 'RepeatDataset',
+    'ClassBalancedDataset', 'DATASETS', 'PIPELINES', 'ImageNet21k', 'SAMPLERS',
+    'build_sampler', 'RepeatAugSampler', 'MyDataset'
+    ]
+```
+
+#### 3. 修改Config文件
+
+```
+'configs/_base_/datasets'目录下新建'mydataset.py'文件，写入内容如下：(#修改为自己的路径)
+```
+
+```
+dataset_type = 'MyDataset'#修改为自己的数据集
+img_norm_cfg = dict(
+    mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
+train_pipeline = [
+    dict(type='LoadImageFromFile'),
+    dict(type='RandomResizedCrop', size=224),
+    dict(type='RandomFlip', flip_prob=0.5, direction='horizontal'),
+    dict(type='Normalize', **img_norm_cfg),
+    dict(type='ImageToTensor', keys=['img']),
+    dict(type='ToTensor', keys=['gt_label']),
+    dict(type='Collect', keys=['img', 'gt_label'])
+]
+test_pipeline = [
+    dict(type='LoadImageFromFile'),
+    dict(type='Resize', size=(256, -1)),
+    dict(type='CenterCrop', crop_size=224),
+    dict(type='Normalize', **img_norm_cfg),
+    dict(type='ImageToTensor', keys=['img']),
+    dict(type='Collect', keys=['img'])
+]
+data = dict(
+    samples_per_gpu=32,
+    workers_per_gpu=2,
+    train=dict(
+        type=dataset_type,
+        data_prefix='train_path',#修改为自己的路径
+        ann_file='train.txt_path',#修改为自己的路径
+        pipeline=train_pipeline),
+    val=dict(
+        type=dataset_type,
+        data_prefix='val_path',#修改为自己的路径
+        ann_file='val.txt_path',#修改为自己的路径*
+        pipeline=test_pipeline),
+    test=dict(
+        # replace `data/val` with `data/test` for standard test
+        type=dataset_type,
+        data_prefix='test_path',#修改为自己的路径
+        ann_file='test.txt_path',#修改为自己的路径
+        pipeline=test_pipeline))
+evaluation = dict(interval=1, metric='accuracy')
+```
+
+```
+'configs/mobilenetv2/mobilenet-v2_8xb32_mydataset.py'，修改为如下内容：
+```
+
+```
+_base_ = [
+    '../_base_/models/mobilenet_v2_mydataset.py',                       
+    '../_base_/datasets/mydataset.py',   
+    '../_base_/schedules/mydataset_bs16.py',
+    '../_base_/default_runtime.py'                         
+]
+```
+
+#### 踩坑：
+
+1. 由于我的项目只有bingpian和bubingpian两类，因此我把'../_base_/models/mobilenet_v2_mydataset.py' 的topk=（1,5）改成了1，只显示top1的值。相应的，在XXX文件下也要修改两处Topk（记不清了，看报错信息很容易定位到，out of range之类的）
+2. 一定要安装开发者模式，dev那个
+3. 大小写分清楚，分不清楚就全小写！！
+
